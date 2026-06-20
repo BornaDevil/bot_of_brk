@@ -40,6 +40,15 @@ cursor.execute("""
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
 """)
+
+# جدول جدید برای ذخیره موقت target_id
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS temp_targets (
+        user_id INTEGER PRIMARY KEY,
+        target_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+""")
 conn.commit()
 
 # ---------- توابع کمکی ----------
@@ -91,6 +100,22 @@ def get_all_admins():
     cursor.execute("SELECT user_id FROM users WHERE role = 'admin'")
     return [row[0] for row in cursor.fetchall()]
 
+# ---------- توابع جدید برای مدیریت target_id در دیتابیس ----------
+def set_target(user_id, target_id):
+    cursor.execute("INSERT OR REPLACE INTO temp_targets (user_id, target_id) VALUES (?, ?)", (user_id, target_id))
+    conn.commit()
+    logger.info(f"📌 target_id {target_id} برای کاربر {user_id} ذخیره شد.")
+
+def get_target(user_id):
+    cursor.execute("SELECT target_id FROM temp_targets WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+def clear_target(user_id):
+    cursor.execute("DELETE FROM temp_targets WHERE user_id = ?", (user_id,))
+    conn.commit()
+    logger.info(f"🗑️ target_id برای کاربر {user_id} پاک شد.")
+
 # ---------- هندلر استارت ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -99,7 +124,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first_name = user.first_name or ""
         username = user.username or ""
 
-        # ثبت یا به‌روزرسانی کاربر
         existing_role = get_user_role(user_id)
         if existing_role == 'user':
             add_user(user_id, first_name, username, 'user')
@@ -108,19 +132,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                           (first_name, username, user_id))
             conn.commit()
 
-        # بررسی لینک اختصاصی (ارسال پیام به کاربر خاص)
+        # بررسی لینک اختصاصی
         args = context.args
         if args:
             try:
                 target_id = int(args[0])
-                if target_id != user_id:  # جلوگیری از ارسال به خود
-                    # ذخیره target_id در chat_data برای دسترسی در همه پیام‌ها
-                    context.chat_data['target_user_id'] = target_id
+                if target_id != user_id:
+                    # ذخیره در دیتابیس به جای دیکشنری
+                    set_target(user_id, target_id)
                     await update.message.reply_text(
                         f"🔹 شما در حال ارسال پیام ناشناس به کاربری با آیدی {target_id} هستید.\n"
                         "📝 پیام خود را بفرستید."
                     )
-                    logger.info(f"🔹 کاربر {user_id} در حالت ارسال به {target_id} قرار گرفت.")
                     return
                 else:
                     await update.message.reply_text("⚠️ شما نمی‌توانید به خودتان پیام ناشناس بفرستید.")
@@ -128,14 +151,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 pass
 
-        # اگر target_user_id در chat_data وجود داشت و کاربر پیام داده، این بخش اجرا نمیشه
-        # چون قبلاً return کرده
-
-        # گرفتن نقش کاربر
         role = get_user_role(user_id)
         is_admin = (role == 'admin' or user_id == MASTER_ADMIN_ID)
 
-        # لینک اختصاصی برای همه
         bot_username = (await context.bot.get_me()).username
         link = f"https://t.me/{bot_username}?start={user_id}"
 
@@ -146,7 +164,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "برای ارسال پیام به ادمین، مستقیم پیام خود را بفرستید."
         )
 
-        # اگر ادمین هست، پنل رو هم اضافه کن
         if is_admin:
             keyboard = [
                 [InlineKeyboardButton("📋 مشاهده لاگ", callback_data="view_log")],
@@ -178,17 +195,16 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("⛔ شما بلاک شده‌اید.")
             return
 
-        # ---------- ارسال به لینک اختصاصی (ناشناس) ----------
-        # بررسی chat_data برای وجود target_user_id
-        target_id = context.chat_data.get('target_user_id')
+        # ---------- بررسی target_id از دیتابیس ----------
+        target_id = get_target(user_id)
+        logger.info(f"🔍 target_id برای کاربر {user_id} از دیتابیس: {target_id}")
+
         if target_id:
             logger.info(f"📩 ارسال پیام ناشناس از {user_id} به {target_id}")
 
-            # ذخیره در دیتابیس
             save_message(user_id, target_id, text)
 
             try:
-                # ارسال پیام به کاربر هدف
                 await context.bot.send_message(
                     chat_id=target_id,
                     text=f"📩 پیام ناشناس از طرف یک کاربر:\n\n{text}"
@@ -210,11 +226,11 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 else:
                     await update.message.reply_text(f"❌ خطا در ارسال پیام: {str(e)[:100]}")
 
-            # پاک کردن target_id از chat_data (برای جلوگیری از ارسال مجدد)
-            context.chat_data.pop('target_user_id', None)
+            # پاک کردن target_id از دیتابیس
+            clear_target(user_id)
             return
 
-        # ---------- ارسال به ادمین‌ها (پیام معمولی) ----------
+        # ---------- ارسال به ادمین‌ها ----------
         admins = get_all_admins()
         if not admins:
             await update.message.reply_text("⚠️ هیچ ادمینی برای دریافت پیام وجود ندارد.")
@@ -250,7 +266,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"خطا در handle_user_message: {e}\n{traceback.format_exc()}")
         await update.message.reply_text("❌ خطایی رخ داد.")
 
-# ---------- بقیه توابع (همون کد قبلی) ----------
+# ---------- بقیه توابع ----------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
