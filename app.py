@@ -108,7 +108,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                           (first_name, username, user_id))
             conn.commit()
 
-        # بررسی لینک اختصاصی (ارسال پیام به کاربر خاص)
+        # بررسی لینک اختصاصی
         args = context.args
         if args:
             try:
@@ -127,15 +127,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         role = get_user_role(user_id)
         is_admin = (role == 'admin' or user_id == MASTER_ADMIN_ID)
 
-        # ---- لینک اختصاصی برای همه ----
+        # لینک اختصاصی برای همه
         bot_username = (await context.bot.get_me()).username
         link = f"https://t.me/{bot_username}?start={user_id}"
-        
-        # پیام اصلی (لینک اختصاصی + توضیحات)
+
         main_message = (
             f"👋 سلام {first_name}!\n\n"
-            f"🔗 **لینک اختصاصی شما:**\n{link}\n\n"
-            "با ارسال این لینک به دیگران، آن‌ها می‌توانند **به شما** پیام ناشناس بفرستند.\n"
+            f"🔗 لینک اختصاصی شما:\n{link}\n\n"
+            "با ارسال این لینک به دیگران، آن‌ها می‌توانند به شما پیام ناشناس بفرستند.\n"
             "برای ارسال پیام به ادمین، مستقیم پیام خود را بفرستید."
         )
 
@@ -148,13 +147,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             if user_id == MASTER_ADMIN_ID:
                 keyboard.append([InlineKeyboardButton("❌ حذف ادمین", callback_data="remove_admin")])
-            
+
             await update.message.reply_text(
-                main_message + "\n\n👑 **پنل مدیریت:**\nاز دکمه‌های زیر استفاده کن:",
+                main_message + "\n\n👑 پنل مدیریت:\nاز دکمه‌های زیر استفاده کن:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         else:
-            # کاربر عادی: فقط لینک اختصاصی
             await update.message.reply_text(main_message)
 
     except Exception as e:
@@ -176,39 +174,31 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         target_id = context.user_data.get('target_user_id')
         if target_id:
             logger.info(f"📩 ارسال پیام ناشناس از {user_id} به {target_id}")
-            
-            # ذخیره در دیتابیس
+
             save_message(user_id, target_id, text)
-            
+
             try:
-                # ارسال پیام به کاربر هدف
                 await context.bot.send_message(
                     chat_id=target_id,
                     text=f"📩 پیام ناشناس از طرف یک کاربر:\n\n{text}"
                 )
                 await update.message.reply_text("✅ پیام شما با موفقیت ارسال شد.")
                 logger.info(f"✅ پیام با موفقیت به {target_id} ارسال شد.")
-                
+
             except Exception as e:
                 logger.error(f"❌ خطا در ارسال به {target_id}: {e}")
-                
-                # تشخیص نوع خطا برای نمایش پیام مناسب به کاربر
                 error_msg = str(e).lower()
+
                 if "user is deactivated" in error_msg or "bot was blocked" in error_msg or "chat not found" in error_msg:
                     await update.message.reply_text(
                         "❌ کاربر مورد نظر ربات را استارت نکرده یا بلاک کرده است.\n"
                         "لطفاً مطمئن شوید که آن کاربر ربات را استارت کرده باشد."
                     )
                 elif "forbidden" in error_msg:
-                    await update.message.reply_text(
-                        "❌ شما اجازه ارسال پیام به این کاربر را ندارید."
-                    )
+                    await update.message.reply_text("❌ شما اجازه ارسال پیام به این کاربر را ندارید.")
                 else:
-                    await update.message.reply_text(
-                        f"❌ خطا در ارسال پیام: {str(e)[:100]}"
-                    )
-            
-            # پاک کردن target_id از حافظه (برای جلوگیری از ارسال مجدد)
+                    await update.message.reply_text(f"❌ خطا در ارسال پیام: {str(e)[:100]}")
+
             context.user_data.pop('target_user_id', None)
             return
 
