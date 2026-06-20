@@ -108,17 +108,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                           (first_name, username, user_id))
             conn.commit()
 
-        # بررسی لینک اختصاصی
+        # بررسی لینک اختصاصی (ارسال پیام به کاربر خاص)
         args = context.args
         if args:
             try:
                 target_id = int(args[0])
-                if target_id != user_id:
+                if target_id != user_id:  # جلوگیری از ارسال به خود
                     context.user_data['target_user_id'] = target_id
                     await update.message.reply_text(
                         f"🔹 شما در حال ارسال پیام ناشناس به کاربری با آیدی {target_id} هستید.\n"
                         "📝 پیام خود را بفرستید."
                     )
+                    logger.info(f"🔹 کاربر {user_id} در حالت ارسال به {target_id} قرار گرفت.")
+                    return
+                else:
+                    await update.message.reply_text("⚠️ شما نمی‌توانید به خودتان پیام ناشناس بفرستید.")
                     return
             except ValueError:
                 pass
@@ -175,9 +179,11 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if target_id:
             logger.info(f"📩 ارسال پیام ناشناس از {user_id} به {target_id}")
 
+            # ذخیره در دیتابیس
             save_message(user_id, target_id, text)
 
             try:
+                # ارسال پیام به کاربر هدف
                 await context.bot.send_message(
                     chat_id=target_id,
                     text=f"📩 پیام ناشناس از طرف یک کاربر:\n\n{text}"
@@ -199,6 +205,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 else:
                     await update.message.reply_text(f"❌ خطا در ارسال پیام: {str(e)[:100]}")
 
+            # پاک کردن target_id از حافظه (برای جلوگیری از ارسال مجدد)
             context.user_data.pop('target_user_id', None)
             return
 
@@ -238,7 +245,11 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"خطا در handle_user_message: {e}\n{traceback.format_exc()}")
         await update.message.reply_text("❌ خطایی رخ داد.")
 
-# ---------- هندلر دکمه‌ها ----------
+# ---------- بقیه توابع (همون کد قبلی) ----------
+# ... (بقیه توابع مثل button_callback, handle_text_input, handle_admin_reply, cancel)
+# برای جلوگیری از تکرار، بقیه رو از نسخه قبلی کپی کن
+# ولی مطمئن شو که تابع main درست باشه
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -334,7 +345,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"خطا در button_callback: {e}\n{traceback.format_exc()}")
         await query.edit_message_text("❌ خطایی رخ داد.")
 
-# ---------- هندلر اضافه کردن ادمین ----------
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -373,7 +383,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"خطا در handle_text_input: {e}\n{traceback.format_exc()}")
         await update.message.reply_text("❌ خطایی رخ داد.")
 
-# ---------- هندلر پاسخ ادمین ----------
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -407,7 +416,6 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error(f"خطا در handle_admin_reply: {e}\n{traceback.format_exc()}")
         await update.message.reply_text("❌ خطایی رخ داد.")
 
-# ---------- هندلر لغو ----------
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
